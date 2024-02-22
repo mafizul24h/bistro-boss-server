@@ -1,12 +1,28 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv').config();
+const jwt = require('jsonwebtoken');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const app = express();
 const port = process.env.PORT || 5000;
 
 app.use(express.json());
 app.use(cors());
+
+const verifyJWT = (req, res, next) => {
+  const authorization = req.headers.authorization;
+  if (!authorization) {
+    res.status(401).send({ error: true, message: 'Unauthorizaed access' });
+  }
+  const token = authorization.split(' ')[1]
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (error, decoded) => {
+    if (error) {
+      return res.status(401).send({ error: true, message: 'Unauthorizaed access' })
+    }
+    req.decoded = decoded;
+    next();
+  });
+}
 
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.3c2xoyj.mongodb.net/?retryWrites=true&w=majority`;
@@ -29,6 +45,13 @@ async function run() {
     const cartCollections = client.db('bistroBD').collection('carts');
     const reviewCollections = client.db('bistroBD').collection('reviews');
     const recommendCollections = client.db('bistroBD').collection('recommend');
+    const userCollections = client.db('bistroBD').collection('users');
+
+    app.post('/jwt', (req, res) => {
+      const user = req.body;
+      const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
+      res.send({ token });
+    })
 
     app.get('/menu', async (req, res) => {
       const result = await menuCollections.find().toArray();
@@ -45,15 +68,47 @@ async function run() {
       res.send(result);
     })
 
+    // User Start  
+    app.get('/users', async (req, res) => {
+      const result = await userCollections.find().sort({ entryDate: -1 }).toArray();
+      res.send(result);
+    })
+
+    app.post('/users', async (req, res) => {
+      const user = req.body;
+      user.entryDate = new Date();
+      const query = { email: user.email };
+      const existUser = await userCollections.findOne(query);
+      if (existUser) {
+        return res.send({ message: 'User already exist' });
+      }
+      const result = await userCollections.insertOne(user);
+      res.send(result);
+    })
+
+    app.patch('/makeAdmin/:id', async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const updateUser = {
+        $set: { role: "admin" }
+      };
+      const result = await userCollections.updateOne(query, updateUser);
+      res.send(result);
+    })
+    // User End
+
     app.get('/carts', async (req, res) => {
       const email = req.query.email;
       const query = { email: email };
+      const decodedEmail = req.decoded.email;
+      if (email !== decodedEmail) {
+        return res.status(403).send({ error: true, message: 'Forbbiden Access' });
+      }
       if (!email) {
         res.send([]);
-      } else {
-        const result = await cartCollections.find(query).sort({entryDate: -1}).toArray();
-        res.send(result);
       }
+      const result = await cartCollections.find(query).sort({ entryDate: -1 }).toArray();
+      res.send(result);
     })
 
     app.post('/carts', async (req, res) => {
@@ -63,9 +118,9 @@ async function run() {
       res.send(result);
     })
 
-    app.delete('/carts/:id', async(req, res) => {
+    app.delete('/carts/:id', async (req, res) => {
       const id = req.params.id;
-      const query = { _id: new ObjectId(id)};
+      const query = { _id: new ObjectId(id) };
       const result = await cartCollections.deleteOne(query);
       res.send(result);
     })
