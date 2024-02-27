@@ -12,16 +12,16 @@ app.use(cors());
 const verifyJWT = (req, res, next) => {
   const authorization = req.headers.authorization;
   if (!authorization) {
-    res.status(401).send({ error: true, message: 'Unauthorizaed access' });
+    return res.status(401).send({ error: true, message: 'unauthorized access' });
   }
-  const token = authorization.split(' ')[1]
-  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (error, decoded) => {
-    if (error) {
-      return res.status(401).send({ error: true, message: 'Unauthorizaed access' })
+  const token = authorization.split(' ')[1];
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(401).send({ error: true, message: 'unauthorized access' })
     }
     req.decoded = decoded;
     next();
-  });
+  })
 }
 
 
@@ -47,11 +47,33 @@ async function run() {
     const recommendCollections = client.db('bistroBD').collection('recommend');
     const userCollections = client.db('bistroBD').collection('users');
 
+    app.get('/admin/:email', verifyJWT, async (req, res) => {
+      const email = req.params.email;
+      const query = { email: email };
+      if (req.decoded.email !== email) {
+        res.send({ admin: false });
+      }
+      const user = await userCollections.findOne(query);
+      const result = { admin: user?.role === 'admin' }
+      // console.log(user, result);
+      res.send(result);
+    })
+
     app.post('/jwt', (req, res) => {
       const user = req.body;
       const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' });
       res.send({ token });
     })
+
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded.email;
+      const query = { email: email };
+      const user = await userCollections.findOne(query);
+      if (user?.role !== 'admin') {
+        return res.status(403).send({ error: true, message: 'forbidden access' });
+      };
+      next();
+    }
 
     app.get('/menu', async (req, res) => {
       const result = await menuCollections.find().toArray();
@@ -69,7 +91,7 @@ async function run() {
     })
 
     // User Start  
-    app.get('/users', async (req, res) => {
+    app.get('/users', verifyJWT, verifyAdmin, async (req, res) => {
       const result = await userCollections.find().sort({ entryDate: -1 }).toArray();
       res.send(result);
     })
@@ -97,16 +119,20 @@ async function run() {
     })
     // User End
 
-    app.get('/carts', async (req, res) => {
+    app.get('/carts', verifyJWT, async (req, res) => {
       const email = req.query.email;
       const query = { email: email };
-      const decodedEmail = req.decoded.email;
-      if (email !== decodedEmail) {
-        return res.status(403).send({ error: true, message: 'Forbbiden Access' });
-      }
+
       if (!email) {
         res.send([]);
       }
+
+      const decodedEmail = req.decoded.email;
+      // console.log(decodedEmail);
+      if (email !== decodedEmail) {
+        return res.status(403).send({ error: true, message: 'Forbbiden Access' });
+      }
+
       const result = await cartCollections.find(query).sort({ entryDate: -1 }).toArray();
       res.send(result);
     })
