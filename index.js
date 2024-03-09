@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv').config();
 const jwt = require('jsonwebtoken');
+const stripe = require('stripe')(process.env.PAYMENT_SECRET_KEY);
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const app = express();
 const port = process.env.PORT || 5000;
@@ -46,6 +47,7 @@ async function run() {
     const reviewCollections = client.db('bistroBD').collection('reviews');
     const recommendCollections = client.db('bistroBD').collection('recommend');
     const userCollections = client.db('bistroBD').collection('users');
+    const paymentCollections = client.db('bistroBD').collection('payments');
 
     app.get('/admin/:email', verifyJWT, async (req, res) => {
       const email = req.params.email;
@@ -86,9 +88,9 @@ async function run() {
       res.send(result);
     })
 
-    app.delete('/menu/:id', verifyJWT, verifyAdmin, async(req, res) => {
+    app.delete('/menu/:id', verifyJWT, verifyAdmin, async (req, res) => {
       const id = req.params.id;
-      const query = {_id: new ObjectId(id)};
+      const query = { _id: new ObjectId(id) };
       const result = await menuCollections.deleteOne(query);
       res.send(result);
     })
@@ -162,6 +164,32 @@ async function run() {
       const query = { _id: new ObjectId(id) };
       const result = await cartCollections.deleteOne(query);
       res.send(result);
+    })
+
+    app.post('/create-payment-inten', verifyJWT, async (req, res) => {
+      const { price } = req.body;
+      const amount = price * 100;
+      // console.log(amount);
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amount,
+        currency: "usd",
+        payment_method_types: ['card']
+      });
+      // console.log(paymentIntent);
+      res.send({
+        clientSecret: paymentIntent.client_secret
+      })
+    })
+
+    app.post('/payment', async (req, res) => {
+      const payment = req.body;
+      payment.entryDate = new Date();
+      const insurtResult = await paymentCollections.insertOne(payment);
+
+      const query = { _id: {$in: payment.cartItems.map(id => new ObjectId(id))}};
+      const deleteResult = await cartCollections.deleteMany(query);
+
+      res.send({insurtResult, deleteResult});
     })
 
     // Send a ping to confirm a successful connection
